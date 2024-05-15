@@ -138,14 +138,14 @@ source(".././R/gibbs_blasso.R")
 # Define prior parameters
 priors = list(s=1, a_sigma = 2, b_sigma = 1, s2_0 = 10)
 
-I = 1000 #number of iterations
+I = 2000 #number of iterations
 
 # Initialize
 w_init = lm_prostate$coefficients
 sigma_init = mean(lm_prostate$residuals^2)
 
 #Run MCMC
-blasso_out = gibbs_blasso(X,y, priors, 1000 , w_init, sigma_init)
+blasso_out = gibbs_blasso(X,y, priors, I , w_init, sigma_init)
 ```
 
 Check mixing and determine burnin (note here we started with good initial values!)
@@ -154,7 +154,7 @@ Check mixing and determine burnin (note here we started with good initial values
 # Check convergence using coda
 
 # Remove burnin
-b = 100
+b = 1000
 blasso_out$w = blasso_out$w[b:I,]
 blasso_out$tau = blasso_out$tau[b:I,]
 blasso_out$sigma = blasso_out$sigma[b:I]
@@ -391,3 +391,4 @@ ggplot() +
 ## Exercises
 
 1. Try changing `algorithm="meanfield"` and seeing how it affects the results. 
+2. Compare the two variational approximations and the gibbs samples for other parameters. What do you notice?

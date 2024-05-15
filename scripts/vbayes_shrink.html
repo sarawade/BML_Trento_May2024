@@ -669,6 +669,8 @@ does this affect?</li>
 <li>Compare the VB posterior with the Gibbs samples for other
 parameters. What do you notice?</li>
 <li>Try adding a step to estimate <span class="math inline">\(s\)</span>.</li>
+<li>Suppose <span class="math inline">\(N\)</span> is relatively large.
+What can be done to help reduce the computational complexity?</li>
 </ol>
 </div>
 <div id="cmdstanr" class="section level2">
@@ -722,8 +724,8 @@ fit_vb &lt;- mod$variational(data = inputdata, algorithm=&quot;fullrank&quot;, s
 ##   This procedure has not been thoroughly tested and may be unstable 
 ##   or buggy. The interface is subject to change. 
 ## ------------------------------------------------------------ 
-## Gradient evaluation took 6.4e-05 seconds 
-## 1000 transitions using 10 leapfrog steps per transition would take 0.64 seconds. 
+## Gradient evaluation took 2.8e-05 seconds 
+## 1000 transitions using 10 leapfrog steps per transition would take 0.28 seconds. 
 ## Adjust your expectations accordingly! 
 ## Begin eta adaptation. 
 ## Iteration:   1 / 250 [  0%]  (Adaptation) 

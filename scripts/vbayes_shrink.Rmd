@@ -296,7 +296,8 @@ print(paste("The RMSE for the bayesian lasso is ",rmse_vblasso))
 1. Try changing s and seeing how it affects the results. 
 2. Try changing the intialization to a random draw from the prior. How does this affect?
 3. Compare the VB posterior with the Gibbs samples for other parameters. What do you notice?
-3. Try adding a step to estimate $s$.
+4. Try adding a step to estimate $s$.
+5. Suppose $N$ is relatively large. What can be done to help reduce the computational complexity?
 
 ## CmdStanR
 

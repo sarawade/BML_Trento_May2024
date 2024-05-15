@@ -267,6 +267,7 @@ print(paste("The RMSE for the bayesian lasso is ",rmse_blasso))
 1. Try changing s and seeing how it affects the results. What is a reasonable value based on the estimated $\lambda$ from lasso?
 2. Try changing the intialization to a random draw from the prior. How does this affect?
 3. Try adding a step to sample $s$.
+4. Suppose $N$ is relatively large. What can be done to help reduce the computational complexity?
 
 ## Bayesreg
 

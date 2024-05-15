@@ -189,23 +189,24 @@ Exercise: Try to repeat for ridge and elastic net and compare the coefficients a
 Run a simple Gibbs sampling algorithm.
 
 ```{r blassosetup}
+
 # Define prior parameters
 priors = list(s=1, a_sigma = 2, b_sigma = 1, s2_0 = 10)
 
-I = 1000 #number of iterations
+I = 2000 #number of iterations
 
 # Initialize
 w_init = lm_prostate$coefficients
 sigma_init = mean(lm_prostate$residuals^2)
 
 #Run MCMC
-blasso_out = gibbs_blasso(X,y, priors, 1000 , w_init, sigma_init)
+blasso_out = gibbs_blasso(X,y, priors, I, w_init, sigma_init)
 ```
 
 Check mixing and determine burnin (note here we started with good initial values!)
 
 ```{r blasso_mcmc}
-# Define prior parameters
+# Traceplots
 traceplot(as.mcmc(blasso_out$w))
 
 traceplot(as.mcmc(blasso_out$tau))
@@ -215,7 +216,7 @@ traceplot(as.mcmc(blasso_out$sigma))
 # Check other diagnostics in coda
 
 # Remove burnin
-b = 100
+b = 1000
 blasso_out$w = blasso_out$w[b:I,]
 blasso_out$tau = blasso_out$tau[b:I,]
 blasso_out$sigma = blasso_out$sigma[b:I]
@@ -273,7 +274,7 @@ You can also try to compare with the package [`bayesreg`](https://rdrr.io/cran/b
 
 ```{r bayesreg}
 library(bayesreg)
-fit <- bayesreg(lpsa~., train_df, model = "gaussian", prior = "lasso", n.samples = 1000)
+fit <- bayesreg(lpsa~., train_df, model = "gaussian", prior = "lasso", n.samples = 2000)
 ```
 
 How do the results compare?
@@ -291,7 +292,7 @@ traceplot(as.mcmc(t(fit$tau2)))
 # Check other diagnostics in coda
 
 # Remove burnin
-b = 100
+b = 1000
 fit$beta = fit$beta[,b:I]
 fit$beta0 = fit$beta0[b:I]
 fit$sigma2 = fit$sigma2[b:I]
@@ -301,9 +302,13 @@ fit$tau2 = fit$tau2 [b:I]
 
 ```{r blasso_mcmc_comp}
 # Compare scatter plot of samples from the two mcmc algorithms
-df = data.frame(w1 = c(blasso_out$w[,2], fit$beta[1,]), w2 = c(blasso_out$w[,7], fit$beta[6,]), 
+coeff_names = names(train_df)[1:D]
+ind1 = 1
+ind2 = 6
+df = data.frame(w1 = c(blasso_out$w[,ind1 +1], fit$beta[ind1,]), w2 = c(blasso_out$w[,ind2 +1], fit$beta[ind2,]), 
                 mcmc = c(rep("Gibbs", dim(blasso_out$w)[1]), rep("HMC", dim(fit$beta)[2])))
 ggplot(df) +
   geom_point(aes(x = w1, y =w2, color = mcmc)) + 
-  theme_bw()
+  theme_bw() +
+  labs(x=coeff_names[ind1],y=coeff_names[ind2])
 ```

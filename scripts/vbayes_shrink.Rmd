@@ -1,0 +1,393 @@
+---
+title: "Variational Bayesian Shirnkage"
+author: "Sara Wade"
+date: ""
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggpubr)
+library(gridExtra)
+library(GGally)
+library(broom)
+library(glmnet)
+library(statmod)
+library(mvtnorm)
+library(coda)
+
+source(".././R/vblasso.R")
+```
+
+## Data
+
+The data for comes from the Elements of Statistical Learning textbook; and is originally from a study by Stamey et al. (1989) in which they examined the relationship between the level of prostate-specific antigen (psa) and a number of clinical measures in men who were about to receive a prostatectomy. The variables are as follows:
+
+- lpsa - log of the level of prostate-specific antigen
+- lcavol - log cancer volume
+- lweight - log prostate weight
+- age - patient age
+- lbph - log of the amount of benign prostatic hyperplasia
+- svi - seminal vesicle invasion
+- lcp - log of capsular penetration
+- gleason - Gleason score
+- pgg45 - percent of Gleason scores 4 or 5
+- train - test / train split used in ESL
+
+These data are available in `prostate.csv`. Let's start by reading in the data and some basic EDA.
+
+```{r data}
+prostate = read.csv(".././data/prostate.csv")
+head(prostate)
+```
+
+```{r datavis, warning=FALSE}
+# Visualize the data (except the last column indicating the test/train split)
+prostate_gg = prostate
+prostate_gg$svi = as.factor(prostate_gg$svi)
+ggpairs(prostate_gg, columns = 1:(ncol(prostate)-1))
+```
+
+
+### Split the data
+```{r datae}
+# Split the data
+train_df = data.frame(prostate[prostate$train==1,])
+train_df = select(train_df, !c(train))
+test_df = data.frame(prostate[prostate$train==0,])
+test_df = select(test_df, !c(train))
+
+
+N = dim(train_df)[1] #number of data points
+D = dim(train_df) [2] -1 #number of features
+Nnew = dim(test_df)[1]
+print(paste("Number of data points =",N, " and number of features =", D))
+```
+
+### Fit linear regression
+
+Let's start by fitting a baseline linear regression model.
+
+First, we will scale the inputs.
+
+```{r scale}
+# Scale the data
+train.m = apply(train_df, 2, mean)
+train.s = apply(train_df,2,sd)
+train_df = (train_df - matrix(train.m,N,D+1,byrow = TRUE))/matrix(train.s,N,D+1,byrow = TRUE)
+test_df = (test_df - matrix(train.m,Nnew,D+1,byrow = TRUE))/matrix(train.s,Nnew,D+1,byrow = TRUE)
+```
+
+Fit the linear regression model and visualize the coefficients.
+
+```{r lm}
+# Fit lm
+lm_prostate = lm(lpsa~., data=train_df)
+summary(lm_prostate)
+tidy_reg_conf_int = tidy(lm_prostate,conf.int =TRUE)
+```
+
+Compute the RMSE on the test data 
+
+```{r lmrmse}
+yhat = predict(lm_prostate, test_df)
+rmse_lm = sqrt(mean((yhat-test_df$lpsa)^2))
+print(paste("The RMSE for the linear model is ",rmse_lm))
+```
+
+## Lasso
+
+Now, we will use `glmnet` to fit a lasso model. First, we need to use cross-validation to tune $\lambda$. 
+
+```{r lassocv}
+set.seed (1)
+X = as.matrix(train_df[,1:D])
+y = train_df$lpsa
+cv.out=cv.glmnet(X, y, alpha=1, standardize = FALSE)
+bestlam=cv.out$lambda.min
+print(bestlam)
+```
+
+
+Now, let's refit with the best lambda
+
+```{r lasso}
+glmnet.out=glmnet(X, y, alpha=1, lambda = bestlam, standardize = FALSE)
+glmnet.out$beta
+tidy_reg_conf_int$lasso = as.matrix(predict(glmnet.out,type="coefficients",s=bestlam))
+```
+
+Compute the RMSE on the test data 
+
+```{r lassormse}
+Xtest = as.matrix(test_df[,1:D])
+yhat = predict(glmnet.out, s = bestlam, Xtest)
+rmse_lasso = sqrt(mean((yhat-test_df$lpsa)^2))
+print(paste("The RMSE for the lasso is ",rmse_lasso))
+```
+
+
+## Bayesian Lasso
+
+Run a simple Gibbs sampling algorithm.
+
+```{r blassosetup}
+source(".././R/gibbs_blasso.R")
+
+# Define prior parameters
+priors = list(s=1, a_sigma = 2, b_sigma = 1, s2_0 = 10)
+
+I = 1000 #number of iterations
+
+# Initialize
+w_init = lm_prostate$coefficients
+sigma_init = mean(lm_prostate$residuals^2)
+
+#Run MCMC
+blasso_out = gibbs_blasso(X,y, priors, 1000 , w_init, sigma_init)
+```
+
+Check mixing and determine burnin (note here we started with good initial values!)
+
+```{r blasso_mcmc}
+# Check convergence using coda
+
+# Remove burnin
+b = 100
+blasso_out$w = blasso_out$w[b:I,]
+blasso_out$tau = blasso_out$tau[b:I,]
+blasso_out$sigma = blasso_out$sigma[b:I]
+```
+
+Let's compare the coefficents
+
+```{r blassocoef}
+# Compute posterior mean and HPD intervals
+bl_what = apply(blasso_out$w,2,mean)
+bl_wci = apply(blasso_out$w,2,function(x){HPDinterval(as.mcmc(x))})
+  
+tidy_reg_conf_int$ls = tidy_reg_conf_int$estimate 
+tidy_reg_conf_int$estimate = bl_what
+tidy_reg_conf_int$conf.low = bl_wci[1,]
+tidy_reg_conf_int$conf.high = bl_wci[2,]
+
+tidy_reg_conf_int %>%
+  filter(term != "(Intercept)") %>%
+  # reorder the coefficients so that the largest is at the top of the plot
+  mutate(term = fct_reorder(term, estimate)) %>%
+  ggplot(aes(estimate, term)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high)) +
+  # add lasso estimates
+  geom_point(aes(lasso, term),shape = 2, color = 'blue') +
+  geom_point(aes(ls, term),shape = 4, color = 'red') +
+  # add in a dotted line at zero
+  geom_vline(xintercept = 0, lty = 2) +
+  labs(
+    x = "Estimate of effect of variable on lpsa",
+    y = NULL,
+    title = "Coefficient plot with error bars") +
+  theme_bw()
+```
+
+Compute the RMSE:
+
+```{r blassormse}
+ 
+yhat = cbind(rep(1,Nnew),Xtest)%*%bl_what
+rmse_blasso = sqrt(mean((yhat-test_df$lpsa)^2))
+print(paste("The RMSE for the bayesian lasso is ",rmse_blasso))
+```
+
+## Variational Bayes Lasso
+
+Run a simple VB algorithm
+
+```{r vblassosetup}
+
+# Define prior parameters
+priors = list(s=1, a_sigma = 2, b_sigma = 1, s2_0 = 10)
+
+# Define initialization
+init = list(mu_w = lm_prostate$coefficients, Sigma_w = diag(1,D+1), 
+            a_sigma = priors$a_sigma, b_sigma = priors$b_sigma, mu_tau = rep(2*priors$s^2,D))
+
+I = 100 #number of iterations
+thresh = 0.001 # threshold for change in elbo
+
+#Run MCMC
+vblasso_out = vblasso(X,y, priors, I, thresh, init)
+```
+
+Plot the ELBO
+```{r elbo}
+ggplot() +
+  geom_line(aes(x = c(1:length(vblasso_out$elbo)), y = vblasso_out$elbo)) +
+  theme_bw() +
+  labs( x ="epoch", y = "ELBO")
+```
+
+Let's compare the coefficents. The means are very similar but the CIs are smaller (underestimation of the variance).
+
+```{r vblassocoef}
+
+tidy_reg_conf_int$blasso = bl_what
+tidy_reg_conf_int$estimate = vblasso_out$mu_w
+tidy_reg_conf_int$conf.low = vblasso_out$mu_w+1.96*sqrt(diag(vblasso_out$Sigma_w))
+tidy_reg_conf_int$conf.high = vblasso_out$mu_w-1.96*sqrt(diag(vblasso_out$Sigma_w))
+
+tidy_reg_conf_int %>%
+  filter(term != "(Intercept)") %>%
+  # reorder the coefficients so that the largest is at the top of the plot
+  mutate(term = fct_reorder(term, estimate)) %>%
+  ggplot(aes(estimate, term)) +
+  geom_point(size = 2) +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high)) +
+  # add lasso estimates
+  geom_point(aes(lasso, term),shape = 2, color = 'blue', size = 2) +
+  geom_point(aes(blasso, term),shape = 3, color = 'darkgreen',size = 2) +
+  geom_point(aes(ls, term),shape = 4, color = 'red',size = 2) +
+  # add in a dotted line at zero
+  geom_vline(xintercept = 0, lty = 2) +
+  labs(
+    x = "Estimate of effect of variable on lpsa",
+    y = NULL,
+    title = "Coefficient plot with error bars") +
+  theme_bw()
+```
+
+For two correlated variables, let's compare the gibbs samples of the coefficients with the VB posterior
+
+```{r vblasso_mcmc_comp}
+# Compare scatter plot of samples from the two mcmc algorithms
+coeff_names = names(train_df)[1:D]
+ind1 = 1
+ind2 = 6
+vblasso_w = rmvnorm(dim(blasso_out$w)[1], vblasso_out$mu_w, vblasso_out$Sigma_w)
+df = data.frame(w1 = c(blasso_out$w[,ind1 +1], vblasso_w[,ind1 +1]), w2 = c(blasso_out$w[,ind2 +1], vblasso_w[,ind2 +1]), 
+                algorithm = c(rep("Gibbs", dim(blasso_out$w)[1]), rep("VB", dim(vblasso_w)[1])))
+ggplot(df) +
+  geom_point(aes(x = w1, y =w2, color = algorithm)) + 
+  theme_bw() +
+  labs(x=coeff_names[ind1],y=coeff_names[ind2])
+
+#Compare histogram of gibbs samples with the VB posterior
+ind = 2
+xseq = seq(min(blasso_out$w[,ind])-.1,max(blasso_out$w[,ind])-.1,0.01)
+ggplot() +
+  geom_histogram(aes(x = blasso_out$w[,ind], y = ..density..), colour = "darkgreen", fill = "white") +
+  geom_line( aes( x = xseq, y = dnorm(xseq, mean = vblasso_out$mu_w[ind],sd = sqrt(vblasso_out$Sigma_w[ind,ind]))), colour = 1) + 
+  theme_bw() +
+  labs(x =coeff_names[ind])
+```
+
+Compute the RMSE:
+
+```{r vblassormse}
+ 
+yhat = cbind(rep(1,Nnew),Xtest)%*%vblasso_out$mu_w
+rmse_vblasso = sqrt(mean((yhat-test_df$lpsa)^2))
+print(paste("The RMSE for the bayesian lasso is ",rmse_vblasso))
+```
+
+## Exercises
+
+1. Try changing s and seeing how it affects the results. 
+2. Try changing the intialization to a random draw from the prior. How does this affect?
+3. Compare the VB posterior with the Gibbs samples for other parameters. What do you notice?
+3. Try adding a step to estimate $s$.
+
+## CmdStanR
+
+We will be using CmdStan R, which allows us to to fit the model with automatic differentian variational inference (ADVI): https://arxiv.org/abs/1506.03431. Note, it also allows other inference schemes (mcmc, MAP, laplace). 
+
+To install and get started with CmdStanR, see https://mc-stan.org/cmdstanr/articles/cmdstanr.html
+
+For an example with variational inference, see https://mc-stan.org/cmdstanr/reference/model-method-variational.html.
+
+For details and examples on bayesian sparse regression in Rstan, see https://betanalpha.github.io/assets/case_studies/bayes_sparse_regression.html
+
+```{r stan_setup}
+library(cmdstanr)
+
+mod <- cmdstan_model(".././R/blasso.stan")
+mod$print()
+```
+
+Note that: the variational approximation assumes a Gaussian variational posterior in the unconstrained variable space. Stan implements two ADVI algorithms: the `algorithm="meanfield"` option uses a fully factorized Gaussian for the approximation; the `algorithm="fullrank"` option uses a Gaussian with a full-rank covariance matrix for the approximation.
+
+```{r stan_blasso}
+inputdata <- list(X = t(X), N = N, y = y, D = D)
+
+fit_vb <- mod$variational(data = inputdata, algorithm="fullrank", seed = 123)
+```
+
+```{r vstan_sum}
+fit_sum = fit_vb$summary()
+fit_sum
+```
+
+
+Let's plot the coefficients
+
+```{r vblassocoef2}
+
+tidy_reg_conf_int$vblasso = vblasso_out$mu_w
+tidy_reg_conf_int$estimate = c(fit_sum$mean[D+3], fit_sum$mean[3:(D+2)])
+tidy_reg_conf_int$conf.low = c(fit_sum$mean[D+3], fit_sum$mean[3:(D+2)])+1.96*c(fit_sum$sd[D+3], fit_sum$sd[3:(D+2)])
+tidy_reg_conf_int$conf.high = c(fit_sum$mean[D+3], fit_sum$mean[3:(D+2)])-1.96*c(fit_sum$sd[D+3], fit_sum$sd[3:(D+2)])
+
+tidy_reg_conf_int %>%
+  filter(term != "(Intercept)") %>%
+  # reorder the coefficients so that the largest is at the top of the plot
+  mutate(term = fct_reorder(term, estimate)) %>%
+  ggplot(aes(estimate, term)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high)) +
+  # add lasso estimates
+  geom_point(aes(lasso, term),shape = 2, color = 'blue') +
+  geom_point(aes(blasso, term),shape = 3, color = 'darkgreen') +
+  geom_point(aes(vblasso, term),shape = 5, color = 'purple') +
+  geom_point(aes(ls, term),shape = 4, color = 'red') +
+  # add in a dotted line at zero
+  geom_vline(xintercept = 0, lty = 2) +
+  labs(
+    x = "Estimate of effect of variable on lpsa",
+    y = NULL,
+    title = "Coefficient plot with error bars") +
+  theme_bw()
+```
+
+Let's compare this vb approximation with gibbs and the previous.
+
+```{r vblasso_mcmc_comp2}
+# Compare scatter plot of samples from the two mcmc algorithms
+coeff_names = names(train_df)[1:D]
+ind1 = 1
+ind2 = 6
+vblasso_w = rmvnorm(dim(blasso_out$w)[1], vblasso_out$mu_w, vblasso_out$Sigma_w)
+vblasso_w2 = fit_vb$draws("w")
+df = data.frame(w1 = c(blasso_out$w[,ind1 +1], vblasso_w[,ind1 +1], vblasso_w2[,ind1]), 
+                w2 = c(blasso_out$w[,ind2 +1], vblasso_w[,ind2 +1], vblasso_w2[,ind2]), 
+                algorithm = c(rep("Gibbs", dim(blasso_out$w)[1]), rep("VB",dim(vblasso_w)[1]), rep("ADVI", dim(vblasso_w2)[1])))
+ggplot(df) +
+  geom_point(aes(x = w1, y =w2, color = algorithm)) + 
+  theme_bw() +
+  labs(x=coeff_names[ind1],y=coeff_names[ind2])
+
+#Compare histogram of gibbs samples with the VB posterior
+ind = 2
+xseq = seq(min(blasso_out$w[,ind])-.1,max(blasso_out$w[,ind])-.1,0.01)
+ggplot() +
+  geom_histogram(aes(x = blasso_out$w[,ind], y = ..density..), colour = "darkgreen", fill = "white") +
+  geom_histogram(aes(x = vblasso_w2[,ind-1], y = ..density..), colour = "purple", fill = "white") +
+  geom_line( aes( x = xseq, y = dnorm(xseq, mean = vblasso_out$mu_w[ind],sd = sqrt(vblasso_out$Sigma_w[ind,ind]))), colour = 1) + 
+  theme_bw() +
+  labs(x =coeff_names[ind])
+```
+
+
+## Exercises
+
+1. Try changing `algorithm="meanfield"` and seeing how it affects the results. 

@@ -35,7 +35,7 @@ gibbs_blasso = function(X,y,priors, I, w_init, sigma_init){
     # Sample w
     S = solve(t(bX)%*%bX+ diag(1/c(s2_0,tau)))
     mu = S%*%t(bX)%*%y
-    w = t(rmvnorm(1, mean = mu, sigma = S))
+    w = t(rmvnorm(1, mean = mu, sigma = sigma*S))
     
     # Sample sigma
     ahat = a_sigma + N/2 + (D+1)/2

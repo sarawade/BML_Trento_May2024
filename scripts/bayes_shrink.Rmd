@@ -1,5 +1,5 @@
 ---
-title: "Bayesian Shirnkage"
+title: "Bayesian Shrinkage"
 author: "Sara Wade"
 date: ""
 output: html_document
@@ -229,7 +229,7 @@ Let's compare the coefficents
 bl_what = apply(blasso_out$w,2,mean)
 bl_wci = apply(blasso_out$w,2,function(x){HPDinterval(as.mcmc(x))})
   
-tidy_reg_conf_int$ls = tidy_reg_conf_int$estimate 
+tidy_reg_conf_int$ls = lm_prostate$coefficients 
 tidy_reg_conf_int$estimate = bl_what
 tidy_reg_conf_int$conf.low = bl_wci[1,]
 tidy_reg_conf_int$conf.high = bl_wci[2,]

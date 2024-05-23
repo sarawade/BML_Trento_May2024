@@ -1,5 +1,5 @@
 ---
-title: "Variational Bayesian Shirnkage"
+title: "Variational Bayesian Shrinkage"
 author: "Sara Wade"
 date: ""
 output: html_document
